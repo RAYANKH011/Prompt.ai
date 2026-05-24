@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+  <meta name="theme-color" content="#0D1F1A"/>
+  <meta name="description" content="Générateur de prompts IA ultra-optimisés"/>
+
+  <!-- PWA / iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="PromptGen"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <link rel="manifest" href="manifest.json"/>
+  <title>PromptGen — AI Optimizer</title>
+
+  <style>
+    html, body { margin:0; padding:0; background:#0D1F1A; height:100%; }
+    #root { height:100%; }
+    /* splash screen */
+    #splash {
+      position:fixed; inset:0; background:#0D1F1A;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      z-index:9999; transition:opacity .4s;
+    }
+    #splash.hide { opacity:0; pointer-events:none; }
+    #splash-logo { font-size:38px; font-weight:800; color:#10A37F; letter-spacing:-1px; }
+    #splash-logo span { color:#E8E0D5; }
+    #splash-sub { font-size:10px; letter-spacing:3px; color:#444; margin-top:6px; }
+    #splash-bar { width:60px; height:2px; background:#10A37F; margin-top:20px; animation:grow 1s ease-out forwards; }
+    @keyframes grow { from{width:0} to{width:60px} }
+  </style>
+</head>
+<body>
+
+<!-- Splash screen pendant le chargement de Babel -->
+<div id="splash">
+  <div id="splash-logo">PROMPT<span>GEN</span></div>
+  <div id="splash-sub">AI OPTIMIZER v2</div>
+  <div id="splash-bar"></div>
+</div>
+
+<div id="root"></div>
+
+<!-- React 18 + ReactDOM depuis CDN -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel standalone (transpile JSX in-browser) -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ── DATA ──────────────────────────────────────────────────────────────────────
+
+const AI_MODELS = [
+  { id:"chatgpt",    name:"ChatGPT",    icon:"✦", color:"#10A37F", bg:"#0D1F1A", accent:"#19C98A",
+    tips:["Précise le format de sortie","Utilise des exemples concrets","Raisonnement étape par étape"],
+    style:"Tu es expert en prompt engineering pour ChatGPT. Génère un prompt ultra-optimisé avec rôle, contexte, tâche et format de sortie. Réponds UNIQUEMENT avec le prompt." },
+  { id:"claude",     name:"Claude",     icon:"◈", color:"#CC785C", bg:"#1F150F", accent:"#E8956A",
+    tips:["Excelle dans les tâches longues","Donne du contexte détaillé","Précise le ton voulu"],
+    style:"Tu es expert en prompt engineering pour Claude. Génère un prompt ultra-optimisé exploitant l'analyse en profondeur. Réponds UNIQUEMENT avec le prompt." },
+  { id:"gemini",     name:"Gemini",     icon:"⟡", color:"#4285F4", bg:"#0A1628", accent:"#669DF6",
+    tips:["Gère le multimodal","Exploite sa recherche web","Demande des comparaisons"],
+    style:"Tu es expert en prompt engineering pour Gemini. Génère un prompt ultra-optimisé tirant parti du multimodal et de l'analyse. Réponds UNIQUEMENT avec le prompt." },
+  { id:"mistral",    name:"Mistral",    icon:"⚡", color:"#FF6B35", bg:"#1A0D08", accent:"#FF8C5A",
+    tips:["Rapide et efficace","Idéal pour le code","Instructions directes"],
+    style:"Tu es expert en prompt engineering pour Mistral AI. Génère un prompt ultra-optimisé, direct et technique. Réponds UNIQUEMENT avec le prompt." },
+  { id:"llama",      name:"Llama",      icon:"◉", color:"#7C3AED", bg:"#110A1F", accent:"#A855F7",
+    tips:["Modèle open-source","Bon pour fine-tuning","Précise le domaine"],
+    style:"Tu es expert en prompt engineering pour Meta Llama. Génère un prompt ultra-optimisé avec system prompt clair. Réponds UNIQUEMENT avec le prompt." },
+  { id:"perplexity", name:"Perplexity", icon:"∞", color:"#20B2AA", bg:"#071918", accent:"#2DD4CB",
+    tips:["Recherche web en temps réel","Idéal pour infos récentes","Demande des sources"],
+    style:"Tu es expert en prompt engineering pour Perplexity AI. Génère un prompt ultra-optimisé pour la recherche web. Réponds UNIQUEMENT avec le prompt." },
+];
+
+const CATEGORIES = [
+  { id:"creation",  label:"Création",  icon:"✧" },
+  { id:"analyse",   label:"Analyse",   icon:"◎" },
+  { id:"code",      label:"Code",      icon:"⌥" },
+  { id:"redaction", label:"Rédaction", icon:"✍" },
+  { id:"marketing", label:"Marketing", icon:"◆" },
+  { id:"recherche", label:"Recherche", icon:"⊕" },
+];
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+
+function hash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(16);
+}
+
+// ── LOCALSTORAGE STORE (persiste entre sessions) ───────────────────────────────
+
+const LS_KEY = 'promptgen_v2';
+
+function loadStore() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '{"users":{},"history":{}}'); }
+  catch { return { users:{}, history:{} }; }
+}
+
+function saveStore(data) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+}
+
+function regUser(username, pwd) {
+  const data = loadStore();
+  const key = username.toLowerCase();
+  if (data.users[key]) return false;
+  data.users[key] = { username, passwordHash: hash(pwd) };
+  data.history[key] = [];
+  saveStore(data);
+  return true;
+}
+
+function loginUser(username, pwd) {
+  const data = loadStore();
+  const u = data.users[username.toLowerCase()];
+  if (!u || u.passwordHash !== hash(pwd)) return null;
+  return u;
+}
+
+function pushHistory(username, entry) {
+  const data = loadStore();
+  const key = username.toLowerCase();
+  if (!data.history[key]) data.history[key] = [];
+  data.history[key] = [entry, ...data.history[key].slice(0, 49)];
+  saveStore(data);
+  return [...data.history[key]];
+}
+
+function getHistory(username) {
+  const data = loadStore();
+  return [...(data.history[username.toLowerCase()] || [])];
+}
+
+function deleteHistoryItem(username, idx) {
+  const data = loadStore();
+  const key = username.toLowerCase();
+  data.history[key] = (data.history[key] || []).filter((_, i) => i !== idx);
+  saveStore(data);
+  return [...data.history[key]];
+}
+
+function clearHistory(username) {
+  const data = loadStore();
+  data.history[username.toLowerCase()] = [];
+  saveStore(data);
+}
+
+// ── COMPONENTS ─────────────────────────────────────────────────────────────────
+
+function Dots({ color }) {
+  return (
+    <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center",padding:20}}>
+      {[0,1,2].map(i=>(
+        <div key={i} style={{width:8,height:8,borderRadius:"50%",background:color||"#888",
+          animation:`dot 1.2s ease-in-out ${i*0.2}s infinite`}}/>
+      ))}
+    </div>
+  );
+}
+
+function Field({ label, type="text", value, onChange, placeholder, accent }) {
+  const [show, setShow] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const isPwd = type === "password";
+  return (
+    <div style={{marginBottom:14}}>
+      {label && <div style={{fontSize:10,letterSpacing:"2px",color:"#555",marginBottom:8}}>{label}</div>}
+      <div style={{position:"relative"}}>
+        <input
+          type={isPwd ? (show ? "text" : "password") : type}
+          value={value}
+          onChange={e=>onChange(e.target.value)}
+          placeholder={placeholder}
+          onFocus={()=>setFocus(true)}
+          onBlur={()=>setFocus(false)}
+          style={{
+            width:"100%", padding: isPwd ? "13px 44px 13px 16px" : "13px 16px",
+            borderRadius:12, fontSize:13, fontFamily:"'DM Mono',monospace",
+            color:"#E8E0D5", background:"rgba(255,255,255,0.06)",
+            border:`1.5px solid ${focus ? accent+"99" : "rgba(255,255,255,0.1)"}`,
+            outline:"none", transition:"border-color 0.2s", boxSizing:"border-box",
+          }}
+        />
+        {isPwd && (
+          <button onClick={()=>setShow(s=>!s)} style={{
+            position:"absolute", right:12, top:"50%", transform:"translateY(-50%)",
+            background:"none", border:"none", cursor:"pointer",
+            color: show ? accent : "#555", fontSize:14, padding:4, lineHeight:1,
+          }}>
+            {show ? "●" : "○"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── INSTALL BANNER ─────────────────────────────────────────────────────────────
+
+function InstallBanner({ accent }) {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const handler = e => { e.preventDefault(); setDeferredPrompt(e); setVisible(true); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div style={{
+      position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)',
+      width:'calc(100% - 40px)', maxWidth:390,
+      background:'rgba(20,20,20,0.95)', backdropFilter:'blur(12px)',
+      border:`1px solid ${accent}40`, borderRadius:14,
+      padding:'13px 16px', display:'flex', alignItems:'center', gap:12,
+      zIndex:1000, boxShadow:`0 8px 32px rgba(0,0,0,0.6)`,
+    }}>
+      <span style={{fontSize:22}}>📲</span>
+      <div style={{flex:1}}>
+        <div style={{fontSize:12, color:'#E8E0D5', fontFamily:"'Syne',sans-serif", fontWeight:700}}>Installer PromptGen</div>
+        <div style={{fontSize:10, color:'#555', marginTop:2}}>Accès rapide depuis ton écran d'accueil</div>
+      </div>
+      <button onClick={async ()=>{ await deferredPrompt.prompt(); setVisible(false); }}
+        style={{padding:'8px 14px', borderRadius:8, border:'none',
+          background:`linear-gradient(135deg,${accent}cc,${accent})`,
+          color:'#000', fontSize:11, fontFamily:"'DM Mono',monospace",
+          fontWeight:700, cursor:'pointer', letterSpacing:'1px', whiteSpace:'nowrap'}}>
+        INSTALLER
+      </button>
+      <button onClick={()=>setVisible(false)}
+        style={{background:'none', border:'none', color:'#555', fontSize:18, cursor:'pointer', padding:4}}>×</button>
+    </div>
+  );
+}
+
+// ── AUTH SCREEN ────────────────────────────────────────────────────────────────
+
+function AuthScreen({ onLogin, accent }) {
+  const [mode, setMode] = useState("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [error, setError]       = useState("");
+  const [success, setSuccess]   = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  function submit() {
+    setError(""); setSuccess("");
+    const u = username.trim();
+    if (!u || !password) { setError("Remplis tous les champs."); return; }
+    if (u.length < 3) { setError("Pseudo trop court (min 3 caractères)."); return; }
+    if (password.length < 4) { setError("Mot de passe trop court (min 4 caractères)."); return; }
+    setLoading(true);
+
+    if (mode === "register") {
+      if (password !== confirm) { setError("Les mots de passe ne correspondent pas."); setLoading(false); return; }
+      const ok = regUser(u, password);
+      if (!ok) { setError("Ce pseudo est déjà pris."); setLoading(false); return; }
+      setSuccess("Compte créé ! Connexion...");
+      setTimeout(() => { onLogin({ username: u }); setLoading(false); }, 700);
+    } else {
+      const user = loginUser(u, password);
+      if (!user) { setError("Pseudo ou mot de passe incorrect."); setLoading(false); return; }
+      onLogin({ username: user.username });
+      setLoading(false);
+    }
+  }
+
+  function handleKey(e) { if (e.key === "Enter") submit(); }
+
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",
+      padding:"40px 28px",zIndex:10,position:"relative"}} onKeyDown={handleKey}>
+      <div style={{textAlign:"center",marginBottom:44}}>
+        <div style={{fontFamily:"'Syne',sans-serif",fontSize:36,fontWeight:800,letterSpacing:"-1px",color:accent}}>
+          PROMPT<span style={{color:"#E8E0D5"}}>GEN</span>
+        </div>
+        <div style={{fontSize:10,color:"#444",letterSpacing:"3px",marginTop:4}}>AI OPTIMIZER v2</div>
+        <div style={{width:36,height:2,background:accent,margin:"18px auto 0"}}/>
+      </div>
+
+      <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:10,padding:4,marginBottom:26,border:"1px solid rgba(255,255,255,0.07)"}}>
+        {["login","register"].map(m=>(
+          <button key={m} onClick={()=>{setMode(m);setError("");setSuccess("");}}
+            style={{flex:1,padding:"10px",border:"none",borderRadius:8,cursor:"pointer",
+              fontFamily:"'DM Mono',monospace",fontSize:11,letterSpacing:"1.5px",fontWeight:500,
+              transition:"all 0.2s",
+              background: mode===m ? accent : "transparent",
+              color: mode===m ? "#000" : "#555"}}>
+            {m==="login" ? "CONNEXION" : "INSCRIPTION"}
+          </button>
+        ))}
+      </div>
+
+      <Field label="PSEUDO" value={username} onChange={setUsername} placeholder="ton_pseudo" accent={accent}/>
+      <Field label="MOT DE PASSE" type="password" value={password} onChange={setPassword} placeholder="••••••" accent={accent}/>
+      {mode==="register" && (
+        <Field label="CONFIRMER" type="password" value={confirm} onChange={setConfirm} placeholder="••••••" accent={accent}/>
+      )}
+
+      {error   && <div style={{padding:"10px 14px",background:"#FF444420",border:"1px solid #FF444440",borderRadius:8,color:"#FF8888",fontSize:12,marginBottom:12}}>{error}</div>}
+      {success && <div style={{padding:"10px 14px",background:`${accent}20`,border:`1px solid ${accent}40`,borderRadius:8,color:accent,fontSize:12,marginBottom:12}}>{success}</div>}
+
+      <button onClick={submit} disabled={loading} style={{
+        width:"100%",padding:16,borderRadius:12,border:"none",
+        background: loading ? "rgba(255,255,255,0.05)" : `linear-gradient(135deg,${accent}cc,${accent})`,
+        color: loading ? "#444" : "#000",
+        fontSize:13,fontFamily:"'Syne',sans-serif",fontWeight:700,letterSpacing:"2px",
+        cursor: loading ? "not-allowed" : "pointer", transition:"all 0.3s",
+      }}>
+        {loading ? "..." : mode==="login" ? "SE CONNECTER →" : "CRÉER MON COMPTE →"}
+      </button>
+
+      <div style={{textAlign:"center",marginTop:18,fontSize:11,color:"#444"}}>
+        {mode==="login" ? "Pas de compte ? " : "Déjà inscrit ? "}
+        <span onClick={()=>{setMode(mode==="login"?"register":"login");setError("");setSuccess("");}}
+          style={{color:accent,cursor:"pointer",textDecoration:"underline"}}>
+          {mode==="login" ? "S'inscrire" : "Se connecter"}
+        </span>
+      </div>
+
+      <div style={{textAlign:"center",marginTop:32,fontSize:10,color:"#2a2a2a"}}>
+        Tes données restent sur cet appareil
+      </div>
+    </div>
+  );
+}
+
+// ── MAIN APP ───────────────────────────────────────────────────────────────────
+
+function App() {
+  const [user,            setUser]            = useState(null);
+  const [selectedAI,      setSelectedAI]      = useState(AI_MODELS[0]);
+  const [selectedCat,     setSelectedCat]     = useState(null);
+  const [userInput,       setUserInput]       = useState("");
+  const [generatedPrompt, setGeneratedPrompt] = useState("");
+  const [loading,         setLoading]         = useState(false);
+  const [copied,          setCopied]          = useState(null);
+  const [history,         setHistory]         = useState([]);
+  const [activeTab,       setActiveTab]       = useState("generate");
+  const [error,           setError]           = useState("");
+  const [expanded,        setExpanded]        = useState(null);
+
+  const ai = selectedAI;
+
+  // Auto-login si session sauvegardée
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('promptgen_session');
+      if (saved) {
+        const u = JSON.parse(saved);
+        setUser(u);
+        setHistory(getHistory(u.username));
+      }
+    } catch {}
+  }, []);
+
+  function handleLogin(u) {
+    setUser(u);
+    setHistory(getHistory(u.username));
+    try { sessionStorage.setItem('promptgen_session', JSON.stringify(u)); } catch {}
+  }
+
+  function handleLogout() {
+    setUser(null); setHistory([]); setGeneratedPrompt("");
+    try { sessionStorage.removeItem('promptgen_session'); } catch {}
+  }
+
+  async function generate() {
+    if (!userInput.trim()) return;
+    setLoading(true); setGeneratedPrompt(""); setError("");
+    try {
+      const cat = selectedCat ? `Catégorie: ${CATEGORIES.find(c=>c.id===selectedCat)?.label}. ` : "";
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          system: ai.style,
+          messages:[{role:"user",content:`${cat}Crée un prompt ultra-optimisé pour: "${userInput}"\nIA cible: ${ai.name}`}],
+        }),
+      });
+      const data = await res.json();
+      const text = (data.content||[]).map(b=>b.text||"").join("");
+      if (!text) throw new Error("Réponse vide");
+      setGeneratedPrompt(text);
+      const entry = {
+        ai:ai.id, aiName:ai.name, aiIcon:ai.icon, aiColor:ai.color, aiAccent:ai.accent,
+        input:userInput, prompt:text,
+        category: selectedCat ? CATEGORIES.find(c=>c.id===selectedCat)?.label : null,
+        date: new Date().toISOString(),
+      };
+      const newH = pushHistory(user.username, entry);
+      setHistory(newH);
+    } catch(e) {
+      setError("Erreur API. Vérifie ta connexion et ta clé API.");
+    }
+    setLoading(false);
+  }
+
+  function copy(text, id) {
+    navigator.clipboard.writeText(text).then(()=>{ setCopied(id); setTimeout(()=>setCopied(null),2000); });
+  }
+
+  function fmtDate(iso) {
+    const d = new Date(iso), now = new Date();
+    const sameDay = d.toDateString()===now.toDateString();
+    return sameDay
+      ? d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})
+      : d.toLocaleDateString("fr-FR",{day:"2-digit",month:"short"})+" · "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+  }
+
+  return (
+    <div style={{minHeight:"100vh",minHeight:"100dvh",background:ai.bg,
+      fontFamily:"'DM Mono','Courier New',monospace",color:"#E8E0D5",
+      display:"flex",flexDirection:"column",maxWidth:430,margin:"0 auto",
+      position:"relative",overflow:"hidden",transition:"background 0.5s"}}>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        input{font-family:'DM Mono',monospace!important;-webkit-appearance:none;}
+        input::placeholder{color:#3a3a3a;}
+        textarea{font-family:'DM Mono',monospace!important;}
+        textarea::placeholder{color:#3a3a3a;}
+        ::-webkit-scrollbar{width:3px;}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px;}
+        .hscroll::-webkit-scrollbar{display:none;}
+        .hscroll{-ms-overflow-style:none;scrollbar-width:none;}
+        @keyframes dot{0%,100%{opacity:.25;transform:scale(.75);}50%{opacity:1;transform:scale(1.2);}}
+        @keyframes up{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+        @keyframes fade{from{opacity:0;}to{opacity:1;}}
+        .anim-up{animation:up .3s ease;}
+        .anim-fade{animation:fade .25s ease;}
+        button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
+      `}</style>
+
+      {/* Ambient glow */}
+      <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:0,
+        background:`radial-gradient(ellipse at 15% 15%,${ai.color}18 0%,transparent 55%),radial-gradient(ellipse at 85% 85%,${ai.accent}0d 0%,transparent 55%)`,
+        transition:"background 0.5s"}}/>
+
+      {/* ── AUTH ── */}
+      {!user ? (
+        <AuthScreen onLogin={handleLogin} accent={ai.accent}/>
+      ) : (
+        <>
+          {/* HEADER */}
+          <div style={{padding:"env(safe-area-inset-top,18px) 20px 0 20px",position:"relative",zIndex:10,paddingTop:"max(18px,env(safe-area-inset-top))"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontSize:20,fontWeight:800,letterSpacing:"-0.5px",color:ai.accent}}>
+                  PROMPT<span style={{color:"#E8E0D5"}}>GEN</span>
+                </div>
+                <div style={{fontSize:9,color:"#444",letterSpacing:"2px"}}>AI OPTIMIZER v2</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{background:`${ai.color}20`,border:`1px solid ${ai.color}40`,
+                  borderRadius:20,padding:"5px 12px",fontSize:11,color:ai.accent}}>
+                  ◎ {user.username}
+                </div>
+                <button onClick={handleLogout}
+                  style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.09)",
+                    borderRadius:8,padding:"5px 9px",color:"#555",fontSize:12,cursor:"pointer"}}>↩</button>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div style={{display:"flex",gap:4,borderBottom:`1px solid ${ai.color}18`}}>
+              {[{id:"generate",label:"Générer"},{id:"history",label:`Historique${history.length?` (${history.length})`:""}`}].map(tab=>(
+                <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                  style={{padding:"9px 16px",border:"none",borderRadius:"7px 7px 0 0",
+                    fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:"1px",cursor:"pointer",
+                    transition:"all 0.2s",
+                    background: activeTab===tab.id ? `${ai.color}20` : "transparent",
+                    color: activeTab===tab.id ? ai.accent : "#444",
+                    borderBottom: activeTab===tab.id ? `2px solid ${ai.color}` : "2px solid transparent"}}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* CONTENT */}
+          <div style={{flex:1,overflowY:"auto",padding:"18px 20px",
+            paddingBottom:"calc(100px + env(safe-area-inset-bottom))",
+            position:"relative",zIndex:10}}>
+
+            {/* ── GENERATE ── */}
+            {activeTab==="generate" && (
+              <div className="anim-fade">
+                {/* AI chips */}
+                <div style={{marginBottom:18}}>
+                  <div style={{fontSize:9,letterSpacing:"2px",color:"#444",marginBottom:9}}>CHOISIR L'IA</div>
+                  <div className="hscroll" style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
+                    {AI_MODELS.map(m=>(
+                      <button key={m.id} onClick={()=>setSelectedAI(m)}
+                        style={{flexShrink:0,padding:"9px 13px",borderRadius:10,cursor:"pointer",
+                          border: selectedAI.id===m.id ? `1.5px solid ${m.color}` : "1.5px solid rgba(255,255,255,0.07)",
+                          background: selectedAI.id===m.id ? `${m.color}1e` : "rgba(255,255,255,0.03)",
+                          transition:"all 0.2s",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                        <span style={{fontSize:15,color: selectedAI.id===m.id ? m.accent : "#444"}}>{m.icon}</span>
+                        <span style={{fontSize:10,fontFamily:"'Syne',sans-serif",fontWeight:700,
+                          color: selectedAI.id===m.id ? m.accent : "#444"}}>{m.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Categories */}
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:9,letterSpacing:"2px",color:"#444",marginBottom:9}}>CATÉGORIE <span style={{color:"#2a2a2a"}}>(optionnel)</span></div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
+                    {CATEGORIES.map(c=>(
+                      <button key={c.id} onClick={()=>setSelectedCat(selectedCat===c.id?null:c.id)}
+                        style={{padding:"5px 11px",borderRadius:20,cursor:"pointer",transition:"all 0.2s",
+                          border: selectedCat===c.id ? `1px solid ${ai.color}77` : "1px solid rgba(255,255,255,0.08)",
+                          background: selectedCat===c.id ? `${ai.color}22` : "transparent",
+                          color: selectedCat===c.id ? ai.accent : "#555",
+                          fontSize:11,fontFamily:"'DM Mono',monospace"}}>
+                        {c.icon} {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div style={{background:`${ai.color}10`,border:`1px solid ${ai.color}25`,
+                  borderRadius:10,padding:"11px 13px",marginBottom:14}}>
+                  <div style={{fontSize:9,letterSpacing:"2px",color:ai.accent,marginBottom:7}}>TIPS {ai.name.toUpperCase()}</div>
+                  {ai.tips.map((t,i)=>(
+                    <div key={i} style={{fontSize:11,color:"#777",marginBottom:i<2?4:0,display:"flex",gap:7}}>
+                      <span style={{color:ai.color}}>→</span>{t}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Textarea */}
+                <div style={{marginBottom:13}}>
+                  <div style={{fontSize:9,letterSpacing:"2px",color:"#444",marginBottom:9}}>VOTRE IDÉE</div>
+                  <textarea value={userInput} onChange={e=>setUserInput(e.target.value)}
+                    placeholder="Ex: Créer un plan de contenu pour les réseaux sociaux..." rows={4}
+                    onFocus={e=>e.target.style.borderColor=`${ai.color}77`}
+                    onBlur={e=>e.target.style.borderColor=`${ai.color}28`}
+                    style={{width:"100%",background:"rgba(255,255,255,0.04)",
+                      border:`1.5px solid ${ai.color}28`,borderRadius:12,
+                      padding:"13px 15px",fontSize:13,color:"#E8E0D5",
+                      resize:"none",outline:"none",lineHeight:1.6,transition:"border-color 0.2s"}}/>
+                </div>
+
+                {/* Button */}
+                <button onClick={generate} disabled={loading||!userInput.trim()} style={{
+                  width:"100%",padding:15,borderRadius:12,border:"none",
+                  background: loading||!userInput.trim() ? "rgba(255,255,255,0.05)" : `linear-gradient(135deg,${ai.color},${ai.accent})`,
+                  color: loading||!userInput.trim() ? "#3a3a3a" : "#000",
+                  fontSize:12,fontFamily:"'Syne',sans-serif",fontWeight:700,letterSpacing:"2px",
+                  cursor: loading||!userInput.trim() ? "not-allowed":"pointer",transition:"all 0.3s"}}>
+                  {loading ? "GÉNÉRATION..." : "⚡ OPTIMISER LE PROMPT"}
+                </button>
+
+                {error && <div style={{marginTop:11,padding:"9px 13px",background:"#FF444418",
+                  border:"1px solid #FF44443a",borderRadius:8,color:"#FF8888",fontSize:12}}>{error}</div>}
+
+                {/* Output */}
+                {(loading||generatedPrompt) && (
+                  <div className="anim-up" style={{marginTop:18,background:"rgba(255,255,255,0.03)",
+                    border:`1px solid ${ai.color}38`,borderRadius:13,overflow:"hidden"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                      padding:"10px 15px",background:`${ai.color}0e`,borderBottom:`1px solid ${ai.color}1a`}}>
+                      <span style={{fontSize:9,letterSpacing:"2px",color:ai.accent}}>PROMPT — {ai.name.toUpperCase()}</span>
+                      {generatedPrompt && (
+                        <button onClick={()=>copy(generatedPrompt,"main")} style={{
+                          background: copied==="main" ? `${ai.color}35`:"transparent",
+                          border:`1px solid ${ai.color}38`,borderRadius:6,padding:"3px 9px",
+                          color: copied==="main" ? ai.accent:"#555",fontSize:10,
+                          fontFamily:"'DM Mono',monospace",cursor:"pointer",letterSpacing:"1px",transition:"all 0.2s"}}>
+                          {copied==="main" ? "✓ COPIÉ":"COPIER"}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{padding:15,minHeight:70}}>
+                      {loading ? <Dots color={ai.color}/> : (
+                        <p style={{fontSize:12.5,lineHeight:1.8,color:"#C0B8B0",whiteSpace:"pre-wrap"}}>{generatedPrompt}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── HISTORY ── */}
+            {activeTab==="history" && (
+              <div className="anim-fade">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                  <div style={{fontSize:9,letterSpacing:"2px",color:"#444"}}>
+                    {history.length} PROMPT{history.length!==1?"S":""} SAUVEGARDÉS
+                  </div>
+                  {history.length>0 && (
+                    <button onClick={()=>{
+                      clearHistory(user.username);
+                      setHistory([]);
+                    }} style={{background:"transparent",border:"1px solid rgba(255,60,60,0.2)",
+                      borderRadius:6,padding:"3px 9px",color:"#FF6666",fontSize:10,
+                      fontFamily:"'DM Mono',monospace",cursor:"pointer",letterSpacing:"1px"}}>
+                      TOUT EFFACER
+                    </button>
+                  )}
+                </div>
+
+                {history.length===0 ? (
+                  <div style={{textAlign:"center",padding:"60px 20px",color:"#2a2a2a"}}>
+                    <div style={{fontSize:34,marginBottom:10}}>◎</div>
+                    <div style={{fontSize:13,color:"#3a3a3a"}}>Aucun prompt généré</div>
+                    <div style={{fontSize:11,color:"#2a2a2a",marginTop:5}}>Tes prompts apparaîtront ici</div>
+                  </div>
+                ) : history.map((item,i)=>{
+                  const isExp = expanded===i;
+                  return (
+                    <div key={i} style={{marginBottom:10,background:"rgba(255,255,255,0.03)",
+                      border:`1px solid ${item.aiColor}28`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"10px 13px",background:`${item.aiColor}10`,
+                        display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:7}}>
+                          <span style={{color:item.aiAccent,fontSize:13}}>{item.aiIcon}</span>
+                          <span style={{fontSize:11,color:item.aiAccent,fontFamily:"'Syne',sans-serif",fontWeight:700}}>{item.aiName}</span>
+                          {item.category && <span style={{fontSize:9,color:"#444",background:"rgba(255,255,255,0.04)",
+                            padding:"2px 7px",borderRadius:10}}>{item.category}</span>}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:7}}>
+                          <span style={{fontSize:9,color:"#3a3a3a"}}>{fmtDate(item.date)}</span>
+                          <button onClick={()=>{
+                            const newH = deleteHistoryItem(user.username, i);
+                            setHistory(newH);
+                            if(expanded===i) setExpanded(null);
+                          }} style={{background:"none",border:"none",color:"#3a3a3a",
+                            fontSize:16,cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>
+                        </div>
+                      </div>
+                      <div style={{padding:"11px 13px"}}>
+                        <div style={{fontSize:11,color:"#555",marginBottom:7,display:"flex",gap:5,alignItems:"flex-start"}}>
+                          <span style={{color:item.aiColor,marginTop:1}}>→</span>
+                          <span style={{lineHeight:1.5}}>{item.input}</span>
+                        </div>
+                        <div style={{fontSize:12,color:"#9A9290",lineHeight:1.7,
+                          ...(isExp ? {} : {display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"})}}>
+                          {item.prompt}
+                        </div>
+                        <div style={{display:"flex",gap:7,marginTop:10}}>
+                          <button onClick={()=>setExpanded(isExp?null:i)}
+                            style={{background:"transparent",border:`1px solid ${item.aiColor}22`,
+                              borderRadius:6,padding:"4px 10px",color:"#555",
+                              fontSize:10,fontFamily:"'DM Mono',monospace",cursor:"pointer",letterSpacing:"1px"}}>
+                            {isExp?"RÉDUIRE":"VOIR TOUT"}
+                          </button>
+                          <button onClick={()=>copy(item.prompt,i)}
+                            style={{background: copied===i?`${item.aiColor}28`:"transparent",
+                              border:`1px solid ${item.aiColor}28`,borderRadius:6,padding:"4px 10px",
+                              color: copied===i?item.aiAccent:"#555",fontSize:10,
+                              fontFamily:"'DM Mono',monospace",cursor:"pointer",letterSpacing:"1px",transition:"all 0.2s"}}>
+                            {copied===i?"✓ COPIÉ":"COPIER"}
+                          </button>
+                          <button onClick={()=>{
+                            const m=AI_MODELS.find(x=>x.id===item.ai);
+                            if(m) setSelectedAI(m);
+                            setUserInput(item.input);
+                            setActiveTab("generate");
+                            setGeneratedPrompt("");
+                          }} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.07)",
+                            borderRadius:6,padding:"4px 10px",color:"#444",
+                            fontSize:10,fontFamily:"'DM Mono',monospace",cursor:"pointer",letterSpacing:"1px"}}>
+                            RELANCER
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Bottom glow */}
+          <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
+            width:220,height:90,pointerEvents:"none",
+            background:`radial-gradient(ellipse,${ai.color}22 0%,transparent 70%)`,
+            transition:"background 0.5s"}}/>
+        </>
+      )}
+
+      {/* Bannière d'installation PWA */}
+      <InstallBanner accent={ai.accent}/>
+    </div>
+  );
+}
+
+// ── RENDER ─────────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+
+// Masquer le splash screen
+setTimeout(() => {
+  const splash = document.getElementById('splash');
+  if (splash) { splash.classList.add('hide'); setTimeout(()=>splash.remove(), 400); }
+}, 600);
+</script>
+
+<!-- Enregistrement du Service Worker -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('[PWA] SW registered:', reg.scope))
+      .catch(err => console.warn('[PWA] SW failed:', err));
+  });
+}
+</script>
+</body>
+</html>
