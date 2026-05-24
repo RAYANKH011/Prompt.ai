@@ -1,4 +1,4 @@
-const CACHE = 'promptgen-v3';
+const CACHE = 'promptgen-v4';
 const SHELL = [
   '/',
   '/index.html',
