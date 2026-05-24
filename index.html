@@ -105,20 +105,22 @@ function deleteHistoryItem(username, idx) {
 function clearHistory(username) { const data = loadStore(); data.history[username.toLowerCase()] = []; saveStore(data); }
 
 // ── CLAUDE API ────────────────────────────────────────────────────────────────
-async function callClaude(systemPrompt, userMessage) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+async function callClaude(systemPrompt, userMessage, apiKey) {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "llama-3.3-70b-versatile",
       max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage }
+      ],
     }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  return data.content?.[0]?.text || "";
+  return data.choices?.[0]?.message?.content || "";
 }
 
 // ── COMPONENTS ────────────────────────────────────────────────────────────────
@@ -171,16 +173,16 @@ function KeyModal({ onSave, accent, existing }) {
       <div style={{width:"100%",maxWidth:430,background:"#111",borderRadius:"20px 20px 0 0",
         padding:"28px 24px 40px",border:"1px solid rgba(255,255,255,0.08)"}}>
         <div style={{fontSize:14,fontFamily:"'Syne',sans-serif",fontWeight:700,color:"#E8E0D5",marginBottom:6}}>
-          🔑 Clé API Gemini
+          🔑 Clé API Groq
         </div>
         <div style={{fontSize:11,color:"#555",marginBottom:20,lineHeight:1.6}}>
           Obtiens ta clé gratuite sur{" "}
-          <span style={{color:accent}}>aistudio.google.com</span>
-          {" "}→ Get API Key
+          <span style={{color:accent}}>console.groq.com</span>
+          {" "}→ API Keys
         </div>
         <div style={{position:"relative",marginBottom:16}}>
           <input type={show?"text":"password"} value={key} onChange={e=>setKey(e.target.value)}
-            placeholder="AIza..." style={{width:"100%",padding:"13px 44px 13px 16px",
+            placeholder="gsk_..." style={{width:"100%",padding:"13px 44px 13px 16px",
               borderRadius:12,fontSize:13,fontFamily:"'DM Mono',monospace",
               color:"#E8E0D5",background:"rgba(255,255,255,0.06)",
               border:`1.5px solid ${accent}44`,outline:"none",boxSizing:"border-box"}}/>
@@ -289,7 +291,7 @@ function App() {
   const [error,           setError]           = useState("");
   const [expanded,        setExpanded]        = useState(null);
   const [showKeyModal,    setShowKeyModal]     = useState(false);
-  const [apiKey,          setApiKey]          = useState("");
+  const [apiKey,          setApiKey]          = useState(() => localStorage.getItem("promptgen_groq_key") || "");
 
 
   const ai = selectedAI;
@@ -304,6 +306,7 @@ function App() {
   function handleLogin(u) {
     setUser(u); setHistory(getHistory(u.username));
     try { sessionStorage.setItem("promptgen_session", JSON.stringify(u)); } catch {}
+    if (!apiKey) setShowKeyModal(true);
   }
 
   function handleLogout() {
@@ -313,17 +316,18 @@ function App() {
 
   function saveApiKey(k) {
     setApiKey(k);
-    localStorage.setItem("promptgen_gemini_key", k);
+    localStorage.setItem("promptgen_groq_key", k);
     setShowKeyModal(false);
   }
 
   async function generate() {
     if (!userInput.trim()) return;
+    if (!apiKey) { setShowKeyModal(true); return; }
     setLoading(true); setGeneratedPrompt(""); setError("");
     try {
       const cat = selectedCat ? `Catégorie: ${CATEGORIES.find(c=>c.id===selectedCat)?.label}. ` : "";
       const userMsg = `${cat}Crée un prompt ultra-optimisé pour: "${userInput}"\nIA cible: ${ai.name}`;
-      const text = await callClaude(ai.style, userMsg);
+      const text = await callClaude(ai.style, userMsg, apiKey);
       if (!text) throw new Error("Réponse vide");
       setGeneratedPrompt(text);
       const entry = {
@@ -334,7 +338,12 @@ function App() {
       };
       setHistory(pushHistory(user.username, entry));
     } catch(e) {
+      if (e.message.includes("401") || e.message.includes("key") || e.message.includes("auth")) {
+        setError("Clé API invalide. Vérifie ta clé Groq.");
+        setShowKeyModal(true);
+      } else {
         setError("Erreur : " + e.message);
+      }
     }
     setLoading(false);
   }
@@ -384,10 +393,17 @@ function App() {
                 <div style={{fontFamily:"'Syne',sans-serif",fontSize:20,fontWeight:800,letterSpacing:"-0.5px",color:ai.accent}}>
                   PROMPT<span style={{color:"#E8E0D5"}}>GEN</span>
                 </div>
-                <div style={{fontSize:9,color:"#444",letterSpacing:"2px"}}>POWERED BY CLAUDE</div>
+                <div style={{fontSize:9,color:"#444",letterSpacing:"2px"}}>POWERED BY GROQ</div>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                {/* Claude powered - no key needed */}
+                {/* Clé API indicator */}
+                <button onClick={()=>setShowKeyModal(true)}
+                  style={{background:apiKey?`${ai.color}20`:"rgba(255,100,100,0.15)",
+                    border:`1px solid ${apiKey?ai.color+"40":"rgba(255,100,100,0.4)"}`,
+                    borderRadius:8,padding:"5px 9px",color:apiKey?ai.accent:"#FF8888",
+                    fontSize:12,cursor:"pointer"}}>
+                  {apiKey?"🔑":"⚠️"}
+                </button>
                 <div style={{background:`${ai.color}20`,border:`1px solid ${ai.color}40`,
                   borderRadius:20,padding:"5px 12px",fontSize:11,color:ai.accent}}>
                   ◎ {user.username}
@@ -417,7 +433,19 @@ function App() {
 
             {activeTab==="generate" && (
               <div className="anim-fade">
-                {/* no key needed with Claude */}
+                {/* Banner clé manquante */}
+                {!apiKey && (
+                  <div onClick={()=>setShowKeyModal(true)}
+                    style={{marginBottom:16,padding:"12px 14px",background:"rgba(255,100,50,0.1)",
+                      border:"1px solid rgba(255,100,50,0.3)",borderRadius:10,cursor:"pointer",
+                      display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:18}}>⚠️</span>
+                    <div>
+                      <div style={{fontSize:11,color:"#FF8866",fontFamily:"'Syne',sans-serif",fontWeight:700}}>Clé API manquante</div>
+                      <div style={{fontSize:10,color:"#555",marginTop:2}}>Appuie ici pour ajouter ta clé Groq gratuite</div>
+                    </div>
+                  </div>
+                )}
 
                 {/* AI chips */}
                 <div style={{marginBottom:18}}>
@@ -592,7 +620,7 @@ function App() {
         </>
       )}
 
-      {/* KeyModal removed - using Claude API */}
+      {showKeyModal && <KeyModal onSave={saveApiKey} accent={ai.accent} existing={apiKey}/>}
     </div>
   );
 }
